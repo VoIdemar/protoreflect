@@ -2,8 +2,10 @@ package protoprint
 
 import (
 	"bytes"
+	"encoding"
 	"fmt"
 	"google.golang.org/protobuf/encoding/prototext"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"io"
 	"math"
 	"os"
@@ -1668,15 +1670,12 @@ func (p *Printer) printOption(name string, optVal interface{}, w *writer, indent
 		// TODO: alternate approach so we can apply p.ForceFullyQualifiedNames
 		// inside the resulting value?
 
-		optValV2 := proto.MessageV2(optVal)
-
 		if indent < 0 {
 			// if printing inline, always use compact form
-			fmt.Fprintf(w, "{ %s }", prototext.Format(optValV2))
+			fmt.Fprintf(w, "{ %s }", protoToV2Text(optVal, true, false))
 			return
 		}
-		mOpts := prototext.MarshalOptions{}
-		str := strings.TrimSuffix(mOpts.Format(optValV2), " ")
+		str := strings.TrimSuffix(protoToV2Text(optVal, true, true), " ")
 		fieldCount := strings.Count(str, ":")
 		nestedCount := strings.Count(str, "{") + strings.Count(str, "<")
 		if fieldCount <= 1 && nestedCount == 0 {
@@ -1695,8 +1694,7 @@ func (p *Printer) printOption(name string, optVal interface{}, w *writer, indent
 		}
 
 		// multi-line form
-		mOpts.Multiline = true
-		str = mOpts.Format(optValV2)
+		str = protoToV2Text(optVal, false, true)
 		fmt.Fprintln(w, "{")
 		p.indentMessageLiteral(w, indent+1, str)
 		p.indent(w, indent)
@@ -2595,4 +2593,30 @@ func (w *writer) Write(p []byte) (int, error) {
 		num++
 	}
 	return num, err
+}
+
+func protoToV2Text(m proto.Message, compact, expandAny bool) string {
+	mr := proto.MessageReflect(m)
+	if mr == nil || !mr.IsValid() {
+		return "<nil>"
+	}
+
+	if tm, ok := m.(encoding.TextMarshaler); ok {
+		textBytes, _ := tm.MarshalText()
+		return string(textBytes)
+	}
+
+	opts := prototext.MarshalOptions{
+		AllowPartial: true,
+		EmitUnknown:  true,
+	}
+	if !compact {
+		opts.Indent = "  "
+	}
+	if !expandAny {
+		opts.Resolver = (*protoregistry.Types)(nil)
+	}
+
+	txt, _ := opts.Marshal(mr.Interface())
+	return string(txt)
 }
